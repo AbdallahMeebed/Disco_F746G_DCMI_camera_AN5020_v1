@@ -178,15 +178,6 @@ static uint32_t CameraHwAddress;
 /* Image size */
 uint32_t Im_size = 0;
 
-/* Camera resolution is QWVGA (480x272) */
-static uint32_t   CameraResX = QVGA_RES_X;
-static uint32_t   CameraResY = QVGA_RES_Y;
-static uint32_t   LcdResX    = WQVGA_RES_X; /* QWVGA landscape */
-static uint32_t   LcdResY    = WQVGA_RES_Y;
-
-static uint32_t          offset_cam = 0;
-static uint32_t          offset_lcd = 0;
-
 __IO uint16_t pBuffer[QVGA_RES_X * QVGA_RES_Y];
 HAL_StatusTypeDef hal_status = HAL_OK;
 
@@ -228,6 +219,9 @@ uint8_t CAMERA_Init(uint32_t );
 void CAMERA_PwrDown(void);
 void CAMERA_PwrUp(void);
 
+void LCD_DisplayOn(void);
+void LCD_DisplayOff(void);
+
 static void LTDC_Init(uint32_t , uint16_t , uint16_t , uint16_t, uint16_t);
 void LCD_GPIO_Init(LTDC_HandleTypeDef *, void *);
 static void OnError_Handler(uint32_t condition);
@@ -236,16 +230,7 @@ static void OnError_Handler(uint32_t condition);
 
 /* Private user code ---------------------------------------------------------*/
 /* USER CODE BEGIN 0 */
-// WARNING UART6 is connected to st-link
-// Properties -> Settings -> MCU_Settings -> select use float with printf
-/*
- * USART6, BaudRate = 115200, WordLength = UART_WORDLENGTH_8B, StopBits = UART_STOPBITS_1;
- * */
-int _write(int file, char *ptr, int len)
-{
-	HAL_UART_Transmit(&huart6,(uint8_t *)ptr, len, 10);
-	return len;
-}
+
 /* USER CODE END 0 */
 
 /**
@@ -307,6 +292,10 @@ int main(void)
 	MX_DMA2D_Init();
 	/* USER CODE BEGIN 2 */
 
+	/*##-2- LCD Initialization ############################*/
+	LTDC_Init(FRAME_BUFFER, 0, 0, 480, 272);
+	LCD_DisplayOff(); // mandatory to avoid parasites on the LCD screen
+
 	CAMERA_PwrDown();
 	hal_status = BSP_SDRAM_Init();
 	OnError_Handler(hal_status != HAL_OK);
@@ -334,7 +323,8 @@ int main(void)
 	OnError_Handler(hal_status != HAL_OK);
 
 	/*##-5- LCD Initialization ############################*/
-	LTDC_Init(FRAME_BUFFER, 0, 0, 480, 272);
+	LCD_DisplayOn();
+	//LTDC_Init(FRAME_BUFFER, 0, 0, 480, 272);
 
 	/* USER CODE END 2 */
 
@@ -1945,62 +1935,27 @@ void CAMERA_PwrDown(void)
 }
 
 /**
- * @brief  Converts a line to an ARGB8888 pixel format.
- * @param  pSrc: Pointer to source buffer
- * @param  pDst: Output color
- * @param  ColorMode: Input color mode
- * @retval None
- */
-static void LCD_LL_ConvertLineToARGB8888(void *pSrc, void *pDst)
+  * @brief  Enables the display.
+  * @retval None
+  */
+void LCD_DisplayOn(void)
 {
-	/* Enable DMA2D clock */
-	__HAL_RCC_DMA2D_CLK_ENABLE();
+  /* Display On */
+  __HAL_LTDC_ENABLE(&hltdc);
+  HAL_GPIO_WritePin(LCD_DISP_GPIO_Port, LCD_DISP_Pin, GPIO_PIN_SET);        /* Assert LCD_DISP pin */
+  HAL_GPIO_WritePin(LCD_BL_CTRL_GPIO_Port, LCD_BL_CTRL_Pin, GPIO_PIN_SET);  /* Assert LCD_BL_CTRL pin */
+}
 
-	/* Configure the DMA2D Mode, Color Mode and output offset */
-	hdma2d.Init.Mode         = DMA2D_M2M_PFC;
-	hdma2d.Init.ColorMode    = DMA2D_OUTPUT_RGB565; // DMA2D_OUTPUT_ARGB8888; /* Output color out of PFC */
-	hdma2d.Init.OutputOffset = 0;
-	//hdma2d.Init.AlphaInverted = DMA2D_REGULAR_ALPHA;  /* No Output Alpha Inversion*/
-	//hdma2d.Init.RedBlueSwap   = DMA2D_RB_REGULAR;     /* No Output Red & Blue swap */
-
-	// DMA2D_INPUT_ARGB8888        0x00000000U  /*!< ARGB8888 color mode */
-	// DMA2D_INPUT_RGB888          0x00000001U  /*!< RGB888 color mode   */
-	// DMA2D_INPUT_RGB565          0x00000002U  /*!< RGB565 color mode   */
-	// DMA2D_INPUT_ARGB1555        0x00000003U  /*!< ARGB1555 color mode */
-	// DMA2D_INPUT_ARGB4444        0x00000004U  /*!< ARGB4444 color mode */
-	// DMA2D_INPUT_L8              0x00000005U  /*!< L8 color mode       */
-	// DMA2D_INPUT_AL44            0x00000006U  /*!< AL44 color mode     */
-	// DMA2D_INPUT_AL88            0x00000007U  /*!< AL88 color mode     */
-	// DMA2D_INPUT_L4              0x00000008U  /*!< L4 color mode       */
-	// DMA2D_INPUT_A8              0x00000009U  /*!< A8 color mode       */
-	// DMA2D_INPUT_A4              0x0000000AU  /*!< A4 color mode       */
-
-	/* Foreground Configuration */
-	hdma2d.LayerCfg[1].AlphaMode = DMA2D_NO_MODIF_ALPHA;
-	hdma2d.LayerCfg[1].InputAlpha = 0xFF; /* fully opaque */
-	hdma2d.LayerCfg[1].InputColorMode = DMA2D_INPUT_RGB565;
-	hdma2d.LayerCfg[1].InputOffset = 0;
-	//hdma2d.LayerCfg[1].RedBlueSwap = DMA2D_RB_REGULAR; /* No ForeGround Red/Blue swap */
-	//hdma2d.LayerCfg[1].AlphaInverted = DMA2D_REGULAR_ALPHA; /* No ForeGround Alpha inversion */
-
-	hdma2d.Instance = DMA2D;
-
-	/* DMA2D Initialization */
-	if(HAL_DMA2D_Init(&hdma2d) == HAL_OK)
-	{
-		if(HAL_DMA2D_ConfigLayer(&hdma2d, 1) == HAL_OK)
-		{
-			if (HAL_DMA2D_Start(&hdma2d, (uint32_t)pSrc, (uint32_t)pDst, CameraResX, 1) == HAL_OK)
-			{
-				/* Polling For DMA transfer */
-				HAL_DMA2D_PollForTransfer(&hdma2d, 10);
-			}
-		}
-	}
-	else
-	{
-		while(1);
-	}
+/**
+  * @brief  Disables the display.
+  * @retval None
+  */
+void LCD_DisplayOff(void)
+{
+  /* Display Off */
+  __HAL_LTDC_DISABLE(&hltdc);
+  HAL_GPIO_WritePin(LCD_DISP_GPIO_Port, LCD_DISP_Pin, GPIO_PIN_RESET);      /* De-assert LCD_DISP pin */
+  HAL_GPIO_WritePin(LCD_BL_CTRL_GPIO_Port, LCD_BL_CTRL_Pin, GPIO_PIN_RESET);/* De-assert LCD_BL_CTRL pin */
 }
 
 /**
@@ -2009,55 +1964,6 @@ static void LCD_LL_ConvertLineToARGB8888(void *pSrc, void *pDst)
 void HAL_DCMI_FrameEventCallback(DCMI_HandleTypeDef *hdcmi)
 {
 	start_the_camera_capture = 1;
-}
-
-/**
- * @brief  Camera line event callback
- * @param  None
- * @retval None
- */
-//void HAL_DCMI_FrameEventCallback(DCMI_HandleTypeDef *hdcmi)
-//{
-//	if (offset_lcd == 0) // ASSUMPTION Camera resolution is lower than LCD resolution
-//	{
-//		/* If Camera resolution is lower than LCD resolution, set display in the middle of the screen */
-//		offset_lcd =   ((((LcdResY - CameraResY) / 2) * LcdResX)   /* Middle of the screen on Y axis */
-//				+   ((LcdResX - CameraResX) / 2))             /* Middle of the screen on X axis */
-//    				  * sizeof(uint32_t);
-//	}
-//
-//	for(uint32_t camera_line_nb = 0; camera_line_nb < CameraResY; camera_line_nb++)
-//	{
-////		LCD_LL_ConvertLineToARGB8888((uint32_t *)(CAMERA_FRAME_BUFFER + offset_cam),
-////				(uint32_t *)(LCD_FRAME_BUFFER + offset_lcd));
-//
-//		for (uint32_t ncol=0; ncol<CameraResX; ncol ++){
-//			uint32_t val = (CAMERA_FRAME_BUFFER + offset_cam+4*ncol);
-//			*(__IO uint32_t*)(4*ncol+LCD_FRAME_BUFFER) = val;
-//		}
-//
-//		offset_cam  = offset_cam + (CameraResX * sizeof(uint16_t));
-//		offset_lcd  = offset_lcd + (LcdResX * sizeof(uint32_t));
-//	}
-//}
-
-static void test_ConvertLineRGB565ToARGB8888(){
-	// white/magenta test color pattern
-	uint32_t offset_cam=0;
-	uint32_t offset_lcd=0;
-
-	for (uint32_t pos=0; pos<LcdResX*LcdResY/2; pos ++){
-		uint32_t val = LCD_RGB565_COLOR_WHITE << 16 | LCD_RGB565_COLOR_DARKMAGENTA;
-		*(__IO uint32_t*)(4*pos+CAMERA_FRAME_BUFFER) = val;
-	}
-
-	for(uint32_t camera_line_nb = 0; camera_line_nb < CameraResY; camera_line_nb++){
-		LCD_LL_ConvertLineToARGB8888((uint32_t *)(CAMERA_FRAME_BUFFER + offset_cam),
-				(uint32_t *)(LCD_FRAME_BUFFER + offset_lcd));
-
-		offset_cam  = offset_cam + (CameraResX * sizeof(uint16_t));
-		offset_lcd  = offset_lcd + (LcdResX * sizeof(uint32_t));
-	}
 }
 
 /**
